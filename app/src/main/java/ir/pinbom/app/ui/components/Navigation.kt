@@ -162,6 +162,7 @@ private val BarBottomMargin = 12.dp
 private val BarElevation = 16.dp
 private val IconSize = 24.dp
 private val TileSize = 40.dp
+private val TileCorner = 10.dp
 private val GlowSize = 40.dp
 private val GlowAlpha = 0.35f
 private val UnderlineWidth = 24.dp

@@ -1,6 +1,7 @@
 package ir.pinbom.app.ui.screens
 
 import android.Manifest
+import android.net.Uri
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.SystemClock
@@ -586,7 +587,7 @@ private fun VoiceMessage(url: String, durationMs: Int, baseUrl: String, accessTo
                     val resolved = imageUrl(baseUrl, url)
                     val next = MediaPlayer()
                     val headers = accessToken?.takeIf { it.isNotBlank() }?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
-                    next.setDataSource(resolved, headers)
+                    next.setDataSource(context, Uri.parse(resolved), headers)
                     next.setOnPreparedListener { it.start(); playing = true }
                     next.setOnCompletionListener { playing = false }
                     next.prepareAsync()
