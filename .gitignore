@@ -1,0 +1,14 @@
+.gradle/
+**/build/
+**/.cxx/
+local.properties
+keystore.properties
+release-signing.properties
+*.p12
+*.jks
+*.keystore
+.idea/
+*.iml
+
+# Fixed CI signing key (kept in the repo on purpose, see release.yml)
+!ci-release.p12
