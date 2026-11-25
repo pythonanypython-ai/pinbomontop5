@@ -5,7 +5,6 @@ import android.net.Uri
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.SystemClock
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -135,19 +134,8 @@ fun ChatInboxScreen(
     val loading by vm.loading.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     var search by remember { mutableStateOf("") }
-    var openingChat by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val operationFailedLabel = stringResource(
-        if (forwardedPinId > 0L) R.string.chat_forward_failed else R.string.state_error_title,
-    )
-    val pickerSubtitle = stringResource(
-        if (forwardedPinId > 0L) R.string.chat_forward_picker_subtitle else R.string.chat_subtitle,
-    )
-    val visibleConversations = remember(items, forwardedPinId) {
-        if (forwardedPinId > 0L) items.filter { it.kind.equals("direct", ignoreCase = true) }
-        else items
-    }
 
     LaunchedEffect(Unit) {
         vm.load()
@@ -162,15 +150,11 @@ fun ChatInboxScreen(
     }
     LaunchedEffect(initialUserId, forwardedPinId) {
         if (initialUserId > 0L) {
-            runCatching {
-                val id = vm.openDirect(initialUserId)
-                if (forwardedPinId > 0L) vm.forward(id, forwardedPinId)
-                id
-            }.onSuccess { id ->
-                nav.navigate(Routes.chat(id)) { launchSingleTop = true }
-            }.onFailure {
-                Toast.makeText(context, operationFailedLabel, Toast.LENGTH_LONG).show()
-            }
+            runCatching { vm.openDirect(initialUserId) }
+                .onSuccess { id ->
+                    if (forwardedPinId > 0L) runCatching { vm.forward(id, forwardedPinId) }
+                    nav.navigate(Routes.chat(id)) { launchSingleTop = true }
+                }
         }
     }
 
@@ -188,9 +172,9 @@ fun ChatInboxScreen(
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.chat_messages), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(pickerSubtitle, style = MaterialTheme.typography.labelMedium, color = PinBomTheme.colors.textSecondary)
+                    Text(stringResource(R.string.chat_subtitle), style = MaterialTheme.typography.labelMedium, color = PinBomTheme.colors.textSecondary)
                 }
-                if (loading || openingChat) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             }
         },
     ) { padding ->
@@ -211,28 +195,21 @@ fun ChatInboxScreen(
                     Text(stringResource(R.string.chat_no_people), color = PinBomTheme.colors.textSecondary, modifier = Modifier.padding(vertical = 16.dp))
                 }
                 people.forEach { person ->
-                    PersonRow(person, session, enabled = !openingChat) {
-                        if (!openingChat) {
-                            openingChat = true
-                            scope.launch {
-                                runCatching {
-                                    val id = vm.openDirect(person.id)
-                                    if (forwardedPinId > 0L) vm.forward(id, forwardedPinId)
-                                    id
-                                }.onSuccess { id ->
-                                    nav.navigate(Routes.chat(id)) { launchSingleTop = true }
-                                }.onFailure {
-                                    Toast.makeText(context, operationFailedLabel, Toast.LENGTH_LONG).show()
+                    PersonRow(person, session) {
+                        scope.launch {
+                            runCatching { vm.openDirect(person.id) }
+                                .onSuccess { id ->
+                                    if (forwardedPinId > 0L) runCatching { vm.forward(id, forwardedPinId) }
+                                    nav.navigate(Routes.chat(id))
                                 }
-                                openingChat = false
-                            }
+                                .onFailure { vm.load() }
                         }
                     }
                 }
                 Divider(Modifier.padding(vertical = 10.dp), color = PinBomTheme.colors.divider)
                 Text(stringResource(R.string.chat_conversations), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             }
-            if (visibleConversations.isEmpty() && !loading && search.isBlank()) {
+            if (items.isEmpty() && !loading && search.isBlank()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(stringResource(R.string.chat_no_conversations), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -242,21 +219,11 @@ fun ChatInboxScreen(
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(visibleConversations, key = { it.id }) { conversation ->
-                        ConversationRow(conversation, session, enabled = !openingChat) {
-                            if (!openingChat) {
-                                openingChat = true
-                                scope.launch {
-                                    runCatching {
-                                        if (forwardedPinId > 0L) vm.forward(conversation.id, forwardedPinId)
-                                        conversation.id
-                                    }.onSuccess { id ->
-                                        nav.navigate(Routes.chat(id)) { launchSingleTop = true }
-                                    }.onFailure {
-                                        Toast.makeText(context, operationFailedLabel, Toast.LENGTH_LONG).show()
-                                    }
-                                    openingChat = false
-                                }
+                    items(items, key = { it.id }) { conversation ->
+                        ConversationRow(conversation, session) {
+                            scope.launch {
+                                if (forwardedPinId > 0L) runCatching { vm.forward(conversation.id, forwardedPinId) }
+                                nav.navigate(Routes.chat(conversation.id))
                             }
                         }
                     }
@@ -268,9 +235,9 @@ fun ChatInboxScreen(
 }
 
 @Composable
-private fun PersonRow(person: SearchUser, session: SessionManager, enabled: Boolean = true, onClick: () -> Unit) {
+private fun PersonRow(person: SearchUser, session: SessionManager, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(enabled = enabled, onClick = onClick).padding(vertical = 10.dp, horizontal = 6.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(vertical = 10.dp, horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(person.display_name.ifBlank { person.username }, url = person.avatar_url, baseUrl = session.baseUrl, size = 48.dp)
@@ -284,12 +251,12 @@ private fun PersonRow(person: SearchUser, session: SessionManager, enabled: Bool
 }
 
 @Composable
-private fun ConversationRow(conversation: ChatConversation, session: SessionManager, enabled: Boolean = true, onClick: () -> Unit) {
+private fun ConversationRow(conversation: ChatConversation, session: SessionManager, onClick: () -> Unit) {
     val name = conversation.peer.display_name.ifBlank { conversation.peer.username.ifBlank { conversation.title } }
     val defaultName = stringResource(R.string.chat_default_name)
     val preview = stringResource(R.string.chat_start_conversation)
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(enabled = enabled, onClick = onClick).padding(vertical = 12.dp, horizontal = 6.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(vertical = 12.dp, horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(name, url = conversation.peer.avatar_url, baseUrl = session.baseUrl, size = 54.dp)
@@ -328,9 +295,6 @@ fun ChatConversationScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val clipboard = LocalClipboardManager.current
-    val density = LocalDensity.current
-    val swipeThreshold = with(density) { 68.dp.toPx() }
-    val maxSwipeOffset = with(density) { 110.dp.toPx() }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var draft by remember { mutableStateOf("") }
@@ -753,6 +717,9 @@ private fun MessageBubble(
     onPinClick: (Long) -> Unit,
 ) {
     val colors = PinBomTheme.colors
+    val density = LocalDensity.current
+    val swipeThreshold = with(density) { 68.dp.toPx() }
+    val maxSwipeOffset = with(density) { 110.dp.toPx() }
     var swipeOffset by remember(message.id) { mutableFloatStateOf(0f) }
     val shape = RoundedCornerShape(
         topStart = 19.dp,
