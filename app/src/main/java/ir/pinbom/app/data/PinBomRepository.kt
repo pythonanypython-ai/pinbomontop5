@@ -111,8 +111,12 @@ class PinBomRepository @Inject constructor(private val api: ApiClient, private v
         } finally { session.clear(); clearLocalPinCache() }
     }
     fun cachedPins(): Flow<List<PinEntity>> = db.pins().observe()
-    suspend fun cache(page: PinPage) = cacheLock.withLock {
+    suspend fun cache(page: PinPage, replace: Boolean = false) = cacheLock.withLock {
         db.withTransaction {
+            // A successful first-page refresh is the authoritative current feed.
+            // Replace the cache before appending later pages so admin-removed pins
+            // cannot survive indefinitely in the offline fallback.
+            if (replace) db.pins().clear()
             db.pins().upsert(page.items.map { pin -> PinEntity(pin.id, pin.title, pin.description, pin.width, pin.height, pin.created_at,
                 pin.image_url, pin.author?.display_name.orEmpty(), pin.author_avatar_url.ifBlank { pin.author?.avatar_url.orEmpty() }) })
             db.pins().trim()

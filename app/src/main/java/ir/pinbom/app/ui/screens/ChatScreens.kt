@@ -5,13 +5,17 @@ import android.net.Uri
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.SystemClock
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +41,12 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -46,6 +56,11 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,14 +70,21 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
@@ -72,6 +94,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import coil3.compose.AsyncImage
@@ -88,6 +113,9 @@ import ir.pinbom.app.ui.nav.Routes
 import ir.pinbom.app.ui.theme.Dimens
 import ir.pinbom.app.ui.theme.PinBomTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
@@ -107,8 +135,19 @@ fun ChatInboxScreen(
     val loading by vm.loading.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     var search by remember { mutableStateOf("") }
+    var openingChat by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val operationFailedLabel = stringResource(
+        if (forwardedPinId > 0L) R.string.chat_forward_failed else R.string.state_error_title,
+    )
+    val pickerSubtitle = stringResource(
+        if (forwardedPinId > 0L) R.string.chat_forward_picker_subtitle else R.string.chat_subtitle,
+    )
+    val visibleConversations = remember(items, forwardedPinId) {
+        if (forwardedPinId > 0L) items.filter { it.kind.equals("direct", ignoreCase = true) }
+        else items
+    }
 
     LaunchedEffect(Unit) {
         vm.load()
@@ -123,11 +162,15 @@ fun ChatInboxScreen(
     }
     LaunchedEffect(initialUserId, forwardedPinId) {
         if (initialUserId > 0L) {
-            runCatching { vm.openDirect(initialUserId) }
-                .onSuccess { id ->
-                    if (forwardedPinId > 0L) runCatching { vm.forward(id, forwardedPinId) }
-                    nav.navigate(Routes.chat(id)) { launchSingleTop = true }
-                }
+            runCatching {
+                val id = vm.openDirect(initialUserId)
+                if (forwardedPinId > 0L) vm.forward(id, forwardedPinId)
+                id
+            }.onSuccess { id ->
+                nav.navigate(Routes.chat(id)) { launchSingleTop = true }
+            }.onFailure {
+                Toast.makeText(context, operationFailedLabel, Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -145,9 +188,9 @@ fun ChatInboxScreen(
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.chat_messages), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(stringResource(R.string.chat_subtitle), style = MaterialTheme.typography.labelMedium, color = PinBomTheme.colors.textSecondary)
+                    Text(pickerSubtitle, style = MaterialTheme.typography.labelMedium, color = PinBomTheme.colors.textSecondary)
                 }
-                if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                if (loading || openingChat) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             }
         },
     ) { padding ->
@@ -168,21 +211,28 @@ fun ChatInboxScreen(
                     Text(stringResource(R.string.chat_no_people), color = PinBomTheme.colors.textSecondary, modifier = Modifier.padding(vertical = 16.dp))
                 }
                 people.forEach { person ->
-                    PersonRow(person, session) {
-                        scope.launch {
-                            runCatching { vm.openDirect(person.id) }
-                                .onSuccess { id ->
-                                    if (forwardedPinId > 0L) runCatching { vm.forward(id, forwardedPinId) }
-                                    nav.navigate(Routes.chat(id))
+                    PersonRow(person, session, enabled = !openingChat) {
+                        if (!openingChat) {
+                            openingChat = true
+                            scope.launch {
+                                runCatching {
+                                    val id = vm.openDirect(person.id)
+                                    if (forwardedPinId > 0L) vm.forward(id, forwardedPinId)
+                                    id
+                                }.onSuccess { id ->
+                                    nav.navigate(Routes.chat(id)) { launchSingleTop = true }
+                                }.onFailure {
+                                    Toast.makeText(context, operationFailedLabel, Toast.LENGTH_LONG).show()
                                 }
-                                .onFailure { vm.load() }
+                                openingChat = false
+                            }
                         }
                     }
                 }
                 Divider(Modifier.padding(vertical = 10.dp), color = PinBomTheme.colors.divider)
                 Text(stringResource(R.string.chat_conversations), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             }
-            if (items.isEmpty() && !loading && search.isBlank()) {
+            if (visibleConversations.isEmpty() && !loading && search.isBlank()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(stringResource(R.string.chat_no_conversations), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -192,11 +242,21 @@ fun ChatInboxScreen(
                 }
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(items, key = { it.id }) { conversation ->
-                        ConversationRow(conversation, session) {
-                            scope.launch {
-                                if (forwardedPinId > 0L) runCatching { vm.forward(conversation.id, forwardedPinId) }
-                                nav.navigate(Routes.chat(conversation.id))
+                    items(visibleConversations, key = { it.id }) { conversation ->
+                        ConversationRow(conversation, session, enabled = !openingChat) {
+                            if (!openingChat) {
+                                openingChat = true
+                                scope.launch {
+                                    runCatching {
+                                        if (forwardedPinId > 0L) vm.forward(conversation.id, forwardedPinId)
+                                        conversation.id
+                                    }.onSuccess { id ->
+                                        nav.navigate(Routes.chat(id)) { launchSingleTop = true }
+                                    }.onFailure {
+                                        Toast.makeText(context, operationFailedLabel, Toast.LENGTH_LONG).show()
+                                    }
+                                    openingChat = false
+                                }
                             }
                         }
                     }
@@ -208,9 +268,9 @@ fun ChatInboxScreen(
 }
 
 @Composable
-private fun PersonRow(person: SearchUser, session: SessionManager, onClick: () -> Unit) {
+private fun PersonRow(person: SearchUser, session: SessionManager, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(vertical = 10.dp, horizontal = 6.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(enabled = enabled, onClick = onClick).padding(vertical = 10.dp, horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(person.display_name.ifBlank { person.username }, url = person.avatar_url, baseUrl = session.baseUrl, size = 48.dp)
@@ -224,12 +284,12 @@ private fun PersonRow(person: SearchUser, session: SessionManager, onClick: () -
 }
 
 @Composable
-private fun ConversationRow(conversation: ChatConversation, session: SessionManager, onClick: () -> Unit) {
+private fun ConversationRow(conversation: ChatConversation, session: SessionManager, enabled: Boolean = true, onClick: () -> Unit) {
     val name = conversation.peer.display_name.ifBlank { conversation.peer.username.ifBlank { conversation.title } }
     val defaultName = stringResource(R.string.chat_default_name)
     val preview = stringResource(R.string.chat_start_conversation)
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick).padding(vertical = 12.dp, horizontal = 6.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).clickable(enabled = enabled, onClick = onClick).padding(vertical = 12.dp, horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(name, url = conversation.peer.avatar_url, baseUrl = session.baseUrl, size = 54.dp)
@@ -251,6 +311,7 @@ private fun ConversationRow(conversation: ChatConversation, session: SessionMana
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatConversationScreen(
     nav: NavHostController,
@@ -260,14 +321,22 @@ fun ChatConversationScreen(
 ) {
     val messages by vm.messages.collectAsStateWithLifecycle()
     val typing by vm.typing.collectAsStateWithLifecycle()
+    val peerFromServer by vm.peer.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+    val loadingOlder by vm.loadingOlder.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val clipboard = LocalClipboardManager.current
+    val density = LocalDensity.current
+    val swipeThreshold = with(density) { 68.dp.toPx() }
+    val maxSwipeOffset = with(density) { 110.dp.toPx() }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var draft by remember { mutableStateOf("") }
     var replyTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var actionTarget by remember { mutableStateOf<ChatMessage?>(null) }
+    var deleteTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var editingTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var editingText by remember { mutableStateOf("") }
     var emojiExpanded by remember { mutableStateOf(false) }
@@ -275,17 +344,76 @@ fun ChatConversationScreen(
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var recordingStartedAt by remember { mutableStateOf(0L) }
+    var moreMenuExpanded by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var initialTimelineReady by remember(conversationId) { mutableStateOf(false) }
+    var initialScrollDone by remember(conversationId) { mutableStateOf(false) }
 
-    suspend fun refreshNow() { vm.refresh(conversationId) }
+    val peer = peerFromServer ?: remember(messages, session.username) {
+        messages.firstOrNull { !it.sender.username.equals(session.username, ignoreCase = true) }?.sender
+    }
+    val peerTitle = peer?.let { it.display_name.ifBlank { it.username } }
+        .orEmpty().ifBlank { stringResource(R.string.chat_open_conversation) }
+    val visibleMessages = remember(messages, searchQuery) {
+        if (searchQuery.isBlank()) messages
+        else messages.filter { it.body.contains(searchQuery, ignoreCase = true) }
+    }
+    val isAtBottom by remember {
+        derivedStateOf {
+            val layout = listState.layoutInfo
+            layout.totalItemsCount == 0 || layout.visibleItemsInfo.lastOrNull()?.index?.let { it >= layout.totalItemsCount - 2 } == true
+        }
+    }
+
     LaunchedEffect(conversationId) {
-        refreshNow()
         vm.startRealtime(conversationId)
+        vm.refresh(conversationId)
     }
     DisposableEffect(conversationId) {
         onDispose { vm.stopRealtime() }
     }
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    // Revalidate the open conversation after the app returns to foreground.
+    // This also updates forwarded-pin placeholders after admin moderation.
+    DisposableEffect(lifecycleOwner, conversationId) {
+        var firstResume = true
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (firstResume) firstResume = false else scope.launch { vm.refresh(conversationId) }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(messages.size, searchQuery) {
+        if (searchQuery.isBlank() && visibleMessages.isNotEmpty()) {
+            if (!initialScrollDone) {
+                listState.scrollToItem(visibleMessages.lastIndex)
+                initialScrollDone = true
+            } else if (isAtBottom) {
+                listState.animateScrollToItem(visibleMessages.lastIndex)
+            }
+            initialTimelineReady = true
+        }
+    }
+    // Keep older history available without blocking the current timeline. The
+    // snapshot observes the current oldest message as well as scroll position,
+    // so it never captures the initial empty list in a stale coroutine closure.
+    LaunchedEffect(conversationId, listState) {
+        snapshotFlow {
+            Triple(listState.firstVisibleItemIndex, messages.firstOrNull()?.id.orEmpty(), searchQuery.isBlank() && initialTimelineReady)
+        }
+            .distinctUntilChanged()
+            .collect { (firstIndex, anchorId, pagingEnabled) ->
+                if (pagingEnabled && firstIndex == 0 && anchorId.isNotBlank()) {
+                    val anchorOffset = listState.firstVisibleItemScrollOffset
+                    val added = vm.loadOlder(conversationId)
+                    if (added > 0) {
+                        val newIndex = vm.messages.value.indexOfFirst { it.id == anchorId }
+                        if (newIndex >= 0) listState.scrollToItem(newIndex, anchorOffset)
+                    }
+                }
+            }
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -296,7 +424,7 @@ fun ChatConversationScreen(
 
     fun startRecording() {
         runCatching {
-            val file = File(context.cacheDir, "bumo-voice-${System.currentTimeMillis()}.m4a")
+            val file = File(context.cacheDir, "pinbom-voice-${System.currentTimeMillis()}.m4a")
             val activeRecorder = MediaRecorder().apply {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -338,106 +466,186 @@ fun ChatConversationScreen(
         containerColor = PinBomTheme.colors.background,
         contentWindowInsets = WindowInsets.navigationBars,
         topBar = {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center,
             ) {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.chat_open_conversation), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-                    Text(if (typing) stringResource(R.string.chat_typing) else stringResource(R.string.chat_private_message), color = PinBomTheme.colors.textSecondary, style = MaterialTheme.typography.labelSmall)
+                IconButton(onClick = { nav.popBackStack() }, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                 }
-                IconButton(onClick = { scope.launch { refreshNow() } }) { Icon(Icons.Default.MoreHoriz, contentDescription = stringResource(R.string.chat_more)) }
+                if (searchOpen) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier.fillMaxWidth().padding(start = 54.dp, end = 58.dp),
+                        singleLine = true,
+                        placeholder = { Text(stringResource(R.string.chat_search_messages)) },
+                        shape = RoundedCornerShape(18.dp),
+                    )
+                } else {
+                    Row(
+                        Modifier.align(Alignment.Center).padding(horizontal = 56.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        if (peer != null) {
+                            Avatar(peerTitle, url = peer.avatar_url, baseUrl = session.baseUrl, size = 40.dp)
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(peerTitle, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (typing) stringResource(R.string.chat_typing) else stringResource(R.string.chat_private_message),
+                                color = if (typing) PinBomTheme.colors.primary else PinBomTheme.colors.textSecondary,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+                Box(Modifier.align(Alignment.CenterEnd)) {
+                    IconButton(onClick = { if (searchOpen) { searchOpen = false; searchQuery = "" } else moreMenuExpanded = true }) {
+                        Icon(if (searchOpen) Icons.Default.Close else Icons.Default.MoreVert, contentDescription = stringResource(R.string.chat_more))
+                    }
+                    DropdownMenu(expanded = moreMenuExpanded, onDismissRequest = { moreMenuExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_search_messages)) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            onClick = { moreMenuExpanded = false; searchOpen = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_mark_read)) },
+                            leadingIcon = { Icon(Icons.Default.DoneAll, contentDescription = null) },
+                            onClick = { moreMenuExpanded = false; scope.launch { vm.markConversationRead(conversationId) } },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.chat_refresh)) },
+                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                            onClick = { moreMenuExpanded = false; scope.launch { vm.refresh(conversationId) } },
+                        )
+                    }
+                }
             }
         },
         bottomBar = {
-            Column(Modifier.fillMaxWidth().background(PinBomTheme.colors.surface).imePadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
-                replyTarget?.let { target ->
-                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Reply, contentDescription = null, tint = PinBomTheme.colors.primary)
-                        Text(stringResource(R.string.chat_reply_to, target.body.take(60)), modifier = Modifier.weight(1f), color = PinBomTheme.colors.textSecondary, maxLines = 1)
-                        TextButton(onClick = { replyTarget = null }) { Text(stringResource(R.string.chat_reply_cancel)) }
-                    }
-                }
-                if (recording) {
-                    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(9.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
-                        Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.chat_recording), modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { stopRecordingAndSend() }) { Text(stringResource(R.string.chat_send_voice)) }
-                    }
-                }
-                if (emojiExpanded) {
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        chatEmojis.forEach { emoji ->
-                            Text(emoji, modifier = Modifier.clickable { draft = (draft + emoji).take(4000) }.padding(4.dp), style = MaterialTheme.typography.titleLarge)
-                        }
-                    }
-                }
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { value -> draft = value.take(4000); if (value.isNotBlank()) scope.launch { vm.typing(conversationId) } },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text(stringResource(R.string.chat_composer_hint)) },
-                        maxLines = 5,
-                        shape = RoundedCornerShape(22.dp),
-                    )
-                    IconButton(onClick = { emojiExpanded = !emojiExpanded }) { Text("😊", style = MaterialTheme.typography.titleLarge) }
-                    if (draft.isBlank()) {
-                        IconButton(
-                            enabled = !busy,
-                            onClick = {
-                                if (recording) stopRecordingAndSend()
-                                else audioPermission.launch(Manifest.permission.RECORD_AUDIO)
-                            },
-                            modifier = Modifier.size(48.dp).clip(CircleShape).background(if (recording) MaterialTheme.colorScheme.error else PinBomTheme.colors.primary),
-                        ) {
-                            Icon(if (recording) Icons.Default.Stop else Icons.Default.Mic, contentDescription = stringResource(R.string.chat_voice), tint = MaterialTheme.colorScheme.onPrimary)
-                        }
-                    } else {
-                        IconButton(
-                            enabled = !busy,
-                            onClick = {
-                                val text = draft.trim()
-                                if (text.isNotBlank()) scope.launch {
-                                    vm.sendText(conversationId, text, replyTarget?.id.orEmpty())
-                                    draft = ""
-                                    replyTarget = null
+            Surface(color = PinBomTheme.colors.surface, shadowElevation = 8.dp) {
+                Column(
+                    Modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    androidx.compose.animation.AnimatedVisibility(visible = replyTarget != null) {
+                        val target = replyTarget
+                        if (target != null) {
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                                    .background(PinBomTheme.colors.surfaceGrey).padding(start = 10.dp, end = 6.dp, top = 7.dp, bottom = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(Modifier.width(3.dp).height(34.dp).clip(CircleShape).background(PinBomTheme.colors.primary))
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(target.sender.display_name.ifBlank { target.sender.username }, color = PinBomTheme.colors.primary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                    Text(target.body.ifBlank { stringResource(R.string.chat_reply_preview) }, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = PinBomTheme.colors.textSecondary)
                                 }
-                            },
-                            modifier = Modifier.size(48.dp).clip(CircleShape).background(PinBomTheme.colors.primary),
-                        ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.chat_send), tint = MaterialTheme.colorScheme.onPrimary) }
+                                IconButton(onClick = { replyTarget = null }) { Icon(Icons.Default.Close, contentDescription = stringResource(R.string.chat_reply_cancel)) }
+                            }
+                        }
+                    }
+                    if (recording) {
+                        Row(Modifier.fillMaxWidth().padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(9.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.chat_recording), modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = { stopRecordingAndSend() }) { Text(stringResource(R.string.chat_send_voice)) }
+                        }
+                    }
+                    if (emojiExpanded) {
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            chatEmojis.forEach { emoji ->
+                                Text(emoji, modifier = Modifier.clickable { draft = (draft + emoji).take(4000) }.padding(4.dp), style = MaterialTheme.typography.titleLarge)
+                            }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        OutlinedTextField(
+                            value = draft,
+                            onValueChange = { value -> draft = value.take(4000); if (value.isNotBlank()) scope.launch { vm.typing(conversationId) } },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text(stringResource(R.string.chat_composer_hint), textAlign = TextAlign.Start) },
+                            maxLines = 5,
+                            shape = RoundedCornerShape(24.dp),
+                        )
+                        IconButton(onClick = { emojiExpanded = !emojiExpanded }, modifier = Modifier.size(46.dp)) {
+                            Text("😊", style = MaterialTheme.typography.titleLarge)
+                        }
+                        if (draft.isBlank()) {
+                            IconButton(
+                                enabled = !busy,
+                                onClick = {
+                                    if (recording) stopRecordingAndSend()
+                                    else audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                },
+                                modifier = Modifier.size(46.dp).clip(CircleShape).background(if (recording) MaterialTheme.colorScheme.error else PinBomTheme.colors.primary),
+                            ) {
+                                Icon(if (recording) Icons.Default.Stop else Icons.Default.Mic, contentDescription = stringResource(R.string.chat_voice), tint = MaterialTheme.colorScheme.onPrimary)
+                            }
+                        } else {
+                            IconButton(
+                                enabled = !busy,
+                                onClick = {
+                                    val text = draft.trim()
+                                    if (text.isNotBlank()) scope.launch {
+                                        val sent = vm.sendText(conversationId, text, replyTarget?.id.orEmpty(), session.username)
+                                        if (sent) { draft = ""; replyTarget = null; emojiExpanded = false }
+                                    }
+                                },
+                                modifier = Modifier.size(46.dp).clip(CircleShape).background(PinBomTheme.colors.primary),
+                            ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.chat_send), tint = MaterialTheme.colorScheme.onPrimary) }
+                        }
                     }
                 }
             }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            if (error.isNotBlank()) {
+                Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), textAlign = TextAlign.Center)
+            }
+            if (loadingOlder) {
+                CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(5.dp).size(18.dp), strokeWidth = 2.dp)
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(messages, key = { it.id }) { message ->
+                items(visibleMessages, key = { it.id }) { message ->
                     MessageBubble(
                         message = message,
                         mine = message.sender.username.equals(session.username, ignoreCase = true),
                         baseUrl = session.baseUrl,
                         accessToken = session.accessToken,
                         onLongPress = { actionTarget = message },
+                        onSwipeReply = { replyTarget = message },
+                        onReplyPreviewClick = { replyId ->
+                            val targetIndex = messages.indexOfFirst { it.id == replyId }
+                            if (targetIndex >= 0) scope.launch { listState.animateScrollToItem(targetIndex) }
+                        },
                         onPinClick = { pinId -> nav.navigate(Routes.pin(pinId)) },
                     )
                 }
+                if (visibleMessages.isEmpty() && searchQuery.isNotBlank()) {
+                    item {
+                        Text(stringResource(R.string.chat_no_search_matches), modifier = Modifier.fillMaxWidth().padding(24.dp), color = PinBomTheme.colors.textSecondary, textAlign = TextAlign.Center)
+                    }
+                }
             }
-            if (messages.isEmpty() && !busy) {
-                Text(stringResource(R.string.chat_first_message), modifier = Modifier.align(Alignment.CenterHorizontally).padding(18.dp), color = PinBomTheme.colors.textSecondary)
+            if (messages.isEmpty() && !busy && searchQuery.isBlank()) {
+                Text(stringResource(R.string.chat_first_message), modifier = Modifier.fillMaxWidth().padding(18.dp), color = PinBomTheme.colors.textSecondary, textAlign = TextAlign.Center)
             }
         }
     }
@@ -447,12 +655,7 @@ fun ChatConversationScreen(
             onDismissRequest = { editingTarget = null },
             title = { Text(stringResource(R.string.chat_edit_message)) },
             text = {
-                OutlinedTextField(
-                    value = editingText,
-                    onValueChange = { editingText = it.take(4000) },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 5,
-                )
+                OutlinedTextField(value = editingText, onValueChange = { editingText = it.take(4000) }, modifier = Modifier.fillMaxWidth(), maxLines = 5)
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -465,38 +668,76 @@ fun ChatConversationScreen(
         )
     }
 
-    actionTarget?.let { target ->
+    deleteTarget?.let { target ->
         AlertDialog(
-            onDismissRequest = { actionTarget = null },
-            title = { Text(stringResource(R.string.chat_manage_message)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        chatEmojis.take(8).forEach { emoji ->
-                            Text(emoji, modifier = Modifier.clickable {
-                                actionTarget = null
-                                scope.launch { vm.react(conversationId, target.id, emoji) }
-                            }.padding(4.dp), style = MaterialTheme.typography.titleLarge)
-                        }
-                    }
-                    TextButton(onClick = { replyTarget = target; actionTarget = null }) { Text(stringResource(R.string.chat_reply)) }
-                    if (target.sender.username.equals(session.username, true)) {
-                        if (target.body.isNotBlank()) {
-                            TextButton(onClick = {
-                                editingText = target.body
-                                editingTarget = target
-                                actionTarget = null
-                            }) { Text(stringResource(R.string.chat_edit)) }
-                        }
-                        TextButton(onClick = {
-                            actionTarget = null
-                            scope.launch { vm.delete(conversationId, target.id) }
-                        }) { Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error) }
-                    }
+            onDismissRequest = { deleteTarget = null },
+            title = { Text(stringResource(R.string.chat_delete)) },
+            text = { Text(stringResource(R.string.chat_delete_confirm)) },
+            confirmButton = {
+                TextButton(onClick = { deleteTarget = null; scope.launch { vm.delete(conversationId, target.id) } }) {
+                    Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
-            confirmButton = { TextButton(onClick = { actionTarget = null }) { Text(stringResource(R.string.chat_close)) } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.chat_close)) } },
         )
+    }
+
+    actionTarget?.let { target ->
+        ModalBottomSheet(onDismissRequest = { actionTarget = null }, containerColor = PinBomTheme.colors.surface) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 26.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(stringResource(R.string.chat_manage_message), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    chatEmojis.forEach { emoji ->
+                        Surface(
+                            modifier = Modifier.size(44.dp).clickable {
+                                actionTarget = null
+                                scope.launch { vm.react(conversationId, target.id, emoji) }
+                            },
+                            shape = CircleShape,
+                            color = PinBomTheme.colors.surfaceGrey,
+                        ) { Box(contentAlignment = Alignment.Center) { Text(emoji, style = MaterialTheme.typography.titleLarge) } }
+                    }
+                }
+                HorizontalDivider(color = PinBomTheme.colors.divider)
+                TextButton(onClick = { replyTarget = target; actionTarget = null }, modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Reply, contentDescription = null)
+                        Spacer(Modifier.width(12.dp))
+                        Text(stringResource(R.string.chat_reply))
+                    }
+                }
+                if (target.body.isNotBlank()) {
+                    TextButton(onClick = { clipboard.setText(AnnotatedString(target.body)); actionTarget = null }, modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null)
+                            Spacer(Modifier.width(12.dp))
+                            Text(stringResource(R.string.chat_copy))
+                        }
+                    }
+                }
+                if (target.sender.username.equals(session.username, true)) {
+                    if (target.body.isNotBlank()) {
+                        TextButton(onClick = { editingText = target.body; editingTarget = target; actionTarget = null }, modifier = Modifier.fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Edit, contentDescription = null)
+                                Spacer(Modifier.width(12.dp))
+                                Text(stringResource(R.string.chat_edit))
+                            }
+                        }
+                    }
+                    TextButton(onClick = { deleteTarget = target; actionTarget = null }, modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.width(12.dp))
+                            Text(stringResource(R.string.chat_delete), color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -507,21 +748,54 @@ private fun MessageBubble(
     baseUrl: String,
     accessToken: String?,
     onLongPress: () -> Unit,
+    onSwipeReply: () -> Unit,
+    onReplyPreviewClick: (String) -> Unit,
     onPinClick: (Long) -> Unit,
 ) {
     val colors = PinBomTheme.colors
-    val nowLabel = stringResource(R.string.chat_now)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
+    var swipeOffset by remember(message.id) { mutableFloatStateOf(0f) }
+    val shape = RoundedCornerShape(
+        topStart = 19.dp,
+        topEnd = 19.dp,
+        bottomStart = if (mine) 19.dp else 5.dp,
+        bottomEnd = if (mine) 5.dp else 19.dp,
+    )
+    Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
+        if (kotlin.math.abs(swipeOffset) > 12f) {
+            Icon(
+                Icons.Default.Reply,
+                contentDescription = null,
+                tint = colors.primary.copy(alpha = (kotlin.math.abs(swipeOffset) / 90f).coerceIn(0.25f, 1f)),
+                modifier = Modifier.align(if (swipeOffset > 0) Alignment.CenterStart else Alignment.CenterEnd).padding(horizontal = 12.dp),
+            )
+        }
         Column(
             Modifier
-                .fillMaxWidth(0.86f)
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = if (mine) 20.dp else 5.dp, bottomEnd = if (mine) 5.dp else 20.dp))
-                .background(if (mine) colors.primary.copy(alpha = if (colors.isDark) 0.28f else 0.12f) else colors.surfaceGrey)
+                .widthIn(min = 56.dp, max = 360.dp)
+                .graphicsLayer { translationX = swipeOffset }
+                .pointerInput(message.id) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            swipeOffset = (swipeOffset + dragAmount).coerceIn(-maxSwipeOffset, maxSwipeOffset)
+                            change.consume()
+                        },
+                        onDragEnd = {
+                            if (kotlin.math.abs(swipeOffset) >= swipeThreshold) onSwipeReply()
+                            swipeOffset = 0f
+                        },
+                        onDragCancel = { swipeOffset = 0f },
+                    )
+                }
                 .pointerInput(message.id) { detectTapGestures(onLongPress = { onLongPress() }) }
+                .clip(shape)
+                .background(if (mine) colors.primary.copy(alpha = if (colors.isDark) 0.26f else 0.105f) else colors.surfaceGrey)
                 .padding(horizontal = 13.dp, vertical = 10.dp),
         ) {
             message.forwarded_pin?.let { pin ->
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(colors.surface).clickable { onPinClick(pin.id) }.padding(8.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(colors.surface)
+                        .clickable { onPinClick(pin.id) }.padding(8.dp),
+                ) {
                     Text("📌 ${stringResource(R.string.chat_pin_forwarded)}", color = colors.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     if (pin.image_url.isNotBlank()) {
                         AsyncImage(model = imageUrl(baseUrl, pin.image_url), contentDescription = pin.title, modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(10.dp)))
@@ -531,22 +805,53 @@ private fun MessageBubble(
                 }
                 if (message.body.isNotBlank()) Spacer(Modifier.height(7.dp))
             }
+            if (message.forwarded_pin_removed) {
+                Text(stringResource(R.string.chat_deleted_pin), color = colors.textSecondary, style = MaterialTheme.typography.bodySmall)
+            }
+            message.reply_preview?.let { preview ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(colors.surface.copy(alpha = 0.72f))
+                        .clickable { onReplyPreviewClick(preview.id) }.padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.width(3.dp).height(34.dp).clip(CircleShape).background(colors.primary))
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(preview.sender_name, color = colors.primary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(preview.body.ifBlank { stringResource(R.string.chat_reply_preview) }, color = colors.textSecondary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Spacer(Modifier.height(7.dp))
+            }
             message.media.forEach { media ->
                 if (media.type == "voice") {
                     VoiceMessage(media.url, media.duration_ms, baseUrl, accessToken)
                     Spacer(Modifier.height(4.dp))
                 }
             }
-            if (message.reply_to.isNotBlank()) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
-                    Icon(Icons.Default.Reply, contentDescription = null, tint = colors.primary, modifier = Modifier.size(13.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.chat_reply_preview), color = colors.textSecondary, style = MaterialTheme.typography.labelSmall)
+            if (message.body.isNotBlank()) {
+                Text(message.body, color = colors.textPrimary, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Start)
+            }
+            if (message.reactions.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState())) {
+                    message.reactions.forEach { reaction ->
+                        Surface(shape = CircleShape, color = colors.surface.copy(alpha = 0.8f)) {
+                            Text(
+                                "${reaction.emoji} ${reaction.count}",
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (reaction.mine) colors.primary else colors.textSecondary,
+                            )
+                        }
+                    }
                 }
             }
-            if (message.body.isNotBlank()) Text(message.body, color = colors.textPrimary, style = MaterialTheme.typography.bodyMedium)
-            Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                Text(message.created_at.substringAfter('T').take(5).ifBlank { "اکنون" }, style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
+            Row(Modifier.align(Alignment.End).padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (message.edited_at.isNotBlank()) {
+                    Text(stringResource(R.string.chat_edited), style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(chatClock(message.created_at).ifBlank { stringResource(R.string.chat_now) }, style = MaterialTheme.typography.labelSmall, color = colors.textSecondary)
                 if (mine) {
                     Spacer(Modifier.width(4.dp))
                     Icon(
@@ -557,17 +862,9 @@ private fun MessageBubble(
                     )
                 }
             }
-            if (message.reactions.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 4.dp)) {
-                    message.reactions.forEach { reaction ->
-                        Text("${reaction.emoji} ${reaction.count}", style = MaterialTheme.typography.labelSmall, color = if (reaction.mine) colors.primary else colors.textSecondary)
-                    }
-                }
-            }
         }
     }
 }
-
 
 @Composable
 private fun VoiceMessage(url: String, durationMs: Int, baseUrl: String, accessToken: String?) {

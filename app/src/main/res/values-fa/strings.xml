@@ -421,7 +421,9 @@
     <string name="chat_now">اکنون</string>
     <string name="chat_read">خوانده شده</string>
     <string name="chat_sent">ارسال شده</string>
-    <string name="chat_forward_pin">ارسال در گفت‌وگو</string>
+    <string name="chat_forward_picker_subtitle">برای ارسال پین، یک گفت‌وگوی خصوصی انتخاب کن.</string>
+    <string name="chat_forward_pin">ارسال به دایرکت</string>
+    <string name="chat_forward_failed">ارسال پین انجام نشد. اتصال را بررسی کن و دوباره تلاش کن.</string>
     <string name="chat_pin">پین</string>
     <string name="chat_more">بیشتر</string>
     <string name="chat_voice_playback">پخش پیام صوتی</string>
@@ -434,4 +436,13 @@
     <string name="chat_empty_preview">شروع گفت‌وگو</string>
     <string name="chat_failed_title">بارگذاری پیام‌ها ناموفق بود</string>
     <string name="chat_error">مشکلی پیش آمد؛ دوباره تلاش کن.</string>
+
+    <string name="chat_search_messages">جست‌وجو در پیام‌ها</string>
+    <string name="chat_mark_read">علامت‌گذاری به‌عنوان خوانده‌شده</string>
+    <string name="chat_refresh">به‌روزرسانی گفت‌وگو</string>
+    <string name="chat_delete_confirm">این پیام برای همه حذف شود؟ این کار قابل بازگشت نیست.</string>
+    <string name="chat_copy">کپی متن</string>
+    <string name="chat_deleted_pin">این پین توسط مدیر حذف شده است.</string>
+    <string name="chat_no_search_matches">پیامی با این عبارت پیدا نشد.</string>
+    <string name="chat_edited">ویرایش‌شده</string>
 </resources>

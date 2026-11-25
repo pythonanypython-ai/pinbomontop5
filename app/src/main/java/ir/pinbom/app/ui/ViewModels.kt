@@ -68,7 +68,7 @@ class FeedSource(
 ) : PagingSource<String, Pin>() {
     override suspend fun load(params: LoadParams<String>): LoadResult<String, Pin> = try {
         val page = repo.feed(kind, params.key.orEmpty())
-        repo.cache(page)
+        if (kind == "home") repo.cache(page, replace = params.key.isNullOrBlank())
         LoadResult.Page(
             data = page.items,
             prevKey = null,

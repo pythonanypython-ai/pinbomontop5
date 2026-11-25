@@ -36,6 +36,14 @@ data class ChatMedia(
 )
 
 @Serializable
+data class ChatReplyPreview(
+    val id: String = "",
+    val sender_name: String = "",
+    val body: String = "",
+    val deleted: Boolean = false,
+)
+
+@Serializable
 data class ChatForwardedPin(
     val id: Long = 0,
     val title: String = "",
@@ -60,7 +68,9 @@ data class ChatMessage(
     val body: String = "",
     val media: List<ChatMedia> = emptyList(),
     val reply_to: String = "",
+    val reply_preview: ChatReplyPreview? = null,
     val forwarded_pin: ChatForwardedPin? = null,
+    val forwarded_pin_removed: Boolean = false,
     val edited_at: String = "",
     val deleted_at: String = "",
     val created_at: String = "",
@@ -70,6 +80,7 @@ data class ChatMessage(
 
 @Serializable
 data class ChatMessagePage(
+    val peer: ChatPeer = ChatPeer(),
     val items: List<ChatMessage> = emptyList(),
     val next_cursor: String = "",
     val typing_users: List<ChatPeer> = emptyList(),

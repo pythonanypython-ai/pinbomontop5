@@ -45,12 +45,16 @@ class ChatRepository @Inject constructor(private val api: ApiClient) {
 
     suspend fun messages(conversationId: String, before: String = ""): ChatMessagePage = api.get(
         "chats/${segment(conversationId)}/messages",
-        mapOf("limit" to "60", "before" to before),
+        mapOf("limit" to "60", "before" to before).filterValues { it.isNotBlank() },
     )
 
-    suspend fun sendText(conversationId: String, text: String, replyTo: String = ""): ChatMessage {
+    suspend fun message(conversationId: String, messageId: String): ChatMessage = api.get(
+        "chats/${segment(conversationId)}/messages/${segment(messageId)}",
+    )
+
+    suspend fun sendText(conversationId: String, text: String, replyTo: String = "", clientMessageId: String = UUID.randomUUID().toString()): ChatMessage {
         val body = buildJsonObject {
-            put("client_message_id", UUID.randomUUID().toString())
+            put("client_message_id", clientMessageId)
             put("body", text.trim())
             if (replyTo.isNotBlank()) put("reply_to", replyTo)
         }

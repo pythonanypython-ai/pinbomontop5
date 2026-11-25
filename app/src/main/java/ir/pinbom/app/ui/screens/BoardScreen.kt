@@ -144,7 +144,6 @@ fun BoardScreen(
             else -> BoardWall(
                 board = current,
                 mine = mine,
-                canEditPins = current?.can_edit == true,
                 baseUrl = session.baseUrl,
                 onOpenPin = { pin -> nav.navigate(Routes.pin(pin.id)) },
                 onEdit = {
@@ -219,13 +218,21 @@ fun BoardScreen(
 
     pinMenu?.let { target ->
         PinBomBottomSheet(onDismissRequest = { pinMenu = null }) {
-            SheetAction(PinBomIcons.BookmarkAdd, stringResource(R.string.board_pin_move)) {
+            SheetAction(PinBomIcons.Send, stringResource(R.string.chat_forward_pin)) {
                 pinMenu = null
-                pinMove = target
+                nav.navigate(Routes.messages(forwardPinId = target.id)) {
+                    launchSingleTop = true
+                }
             }
-            SheetAction(PinBomIcons.Delete, stringResource(R.string.board_pin_remove), destructive = true) {
-                pinMenu = null
-                pinRemove = target
+            if (board?.can_edit == true) {
+                SheetAction(PinBomIcons.BookmarkAdd, stringResource(R.string.board_pin_move)) {
+                    pinMenu = null
+                    pinMove = target
+                }
+                SheetAction(PinBomIcons.Delete, stringResource(R.string.board_pin_remove), destructive = true) {
+                    pinMenu = null
+                    pinRemove = target
+                }
             }
         }
     }
@@ -323,7 +330,6 @@ fun BoardScreen(
 private fun BoardWall(
     board: BoardDetail,
     mine: Boolean,
-    canEditPins: Boolean = false,
     baseUrl: String,
     onOpenPin: (Pin) -> Unit,
     onEdit: () -> Unit,
@@ -390,17 +396,15 @@ private fun BoardWall(
             items(items = board.pins, key = { it.id }, contentType = { "pin" }) { pin ->
                 Box {
                     PinQuickCard(pin = pin, baseUrl = baseUrl, onOpen = onOpenPin, sharedBounds = pin.id in sharedPinIds)
-                    if (canEditPins) {
-                        IconCircleButton(
-                            icon = PinBomIcons.MoreHoriz,
-                            contentDescription = stringResource(R.string.extras_more),
-                            onClick = { onPinMore(pin) },
-                            size = 32.dp,
-                            iconSize = 16.dp,
-                            containerColor = PinBomTheme.colors.surface,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(Dimens.sm),
-                        )
-                    }
+                    IconCircleButton(
+                        icon = PinBomIcons.MoreHoriz,
+                        contentDescription = stringResource(R.string.extras_more),
+                        onClick = { onPinMore(pin) },
+                        size = 32.dp,
+                        iconSize = 16.dp,
+                        containerColor = PinBomTheme.colors.surface,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(Dimens.sm),
+                    )
                 }
             }
         }

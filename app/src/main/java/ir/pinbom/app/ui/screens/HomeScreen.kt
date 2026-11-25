@@ -23,7 +23,11 @@ import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridS
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -119,6 +123,19 @@ fun HomeScreen(
      * whole screen (and re-map every row) on each of those emissions. */
     val cachedState = vm.cached.collectAsStateWithLifecycle(initialValue = emptyList())
     val online = rememberIsOnline()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // Refresh after returning to the app: this revalidates moderated pins and
+    // prevents a previously loaded card from remaining visible indefinitely.
+    DisposableEffect(lifecycleOwner, feed) {
+        var firstResume = true
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (firstResume) firstResume = false else feed.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val context = LocalContext.current
     val actionVm: PinActionViewModel = hiltViewModel()
     val scope = rememberCoroutineScope()
@@ -372,6 +389,19 @@ fun HomeScreen(
           PinBomBottomSheet(onDismissRequest = { quickPin = null }) {
               Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
               SheetHeader(title = activeQuickPin.title.ifBlank { moreLabel }, contentDirection = true)
+              SecondaryPillButton(
+                  text = stringResource(R.string.chat_forward_pin),
+                  onClick = {
+                      quickPin = null
+                      nav.navigate(Routes.messages(forwardPinId = activeQuickPin.id)) {
+                          launchSingleTop = true
+                      }
+                  },
+                  leadingIcon = PinBomIcons.Send,
+                  fillWidth = true,
+                  size = PillButtonSize.Regular,
+              )
+              Spacer(Modifier.height(Dimens.sm))
               SecondaryPillButton(
                   text = stringResource(if (quickLiked) R.string.action_unlike else R.string.action_like),
                   onClick = {

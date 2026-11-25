@@ -421,7 +421,9 @@
     <string name="chat_now">Now</string>
     <string name="chat_read">Read</string>
     <string name="chat_sent">Sent</string>
-    <string name="chat_forward_pin">Share in chat</string>
+    <string name="chat_forward_picker_subtitle">Choose a private conversation to send this pin.</string>
+    <string name="chat_forward_pin">Send to direct chat</string>
+    <string name="chat_forward_failed">The pin could not be sent. Check your connection and try again.</string>
     <string name="chat_pin">Pin</string>
     <string name="chat_more">More</string>
     <string name="chat_voice_playback">Play voice message</string>
@@ -434,4 +436,13 @@
     <string name="chat_empty_preview">Start chatting</string>
     <string name="chat_failed_title">Could not load messages</string>
     <string name="chat_error">Something went wrong. Please try again.</string>
+
+    <string name="chat_search_messages">Search messages</string>
+    <string name="chat_mark_read">Mark as read</string>
+    <string name="chat_refresh">Refresh conversation</string>
+    <string name="chat_delete_confirm">Delete this message for everyone? This cannot be undone.</string>
+    <string name="chat_copy">Copy text</string>
+    <string name="chat_deleted_pin">This pin was removed by an administrator.</string>
+    <string name="chat_no_search_matches">No messages match this search.</string>
+    <string name="chat_edited">Edited</string>
 </resources>
